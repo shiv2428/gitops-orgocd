@@ -1,0 +1,16 @@
+stages:
+ - build
+ - deploy
+
+build:
+ stage: build
+
+ script:
+  - docker build -t myapp:$CI_COMMIT_SHA .
+  - docker push myapp:$CI_COMMIT_SHA
+
+deploy:
+ stage: deploy
+
+ script:
+  - kubectl apply -f k8s/deployment.yaml
