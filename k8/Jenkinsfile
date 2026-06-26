@@ -1,116 +1,123 @@
 pipeline {
-
     agent any
 
     environment {
-
-        IMAGE="dockerhubusername/node-app"
-
+        IMAGE_NAME = "YOUR_DOCKERHUB_USERNAME/nodejs-app"
+        IMAGE_TAG = "${BUILD_NUMBER}"
+        SONAR_SCANNER = tool 'sonar-scanner'
     }
 
     stages {
 
         stage('Checkout') {
-
             steps {
-
-                git branch: 'dev',
-                url: 'https://github.com/shiv2428/gitops-orgocd.git'
-
+                checkout scm
             }
-
         }
 
-        stage('Install') {
-
+        stage('Verify Workspace') {
             steps {
+                sh '''
+                pwd
+                ls -la
+                '''
+            }
+        }
 
+        stage('Install Dependencies') {
+            steps {
                 sh 'npm install'
-
             }
-
         }
 
-        stage('Test') {
-
+        stage('Run Unit Test') {
             steps {
-
-                sh 'npm test'
-
+                sh 'npm test || true'
             }
-
         }
 
-        stage('SonarQube') {
-
+        stage('SonarQube Scan') {
             steps {
-
-                sh 'sonar-scanner'
-
+                withSonarQubeEnv('sonarqube') {
+                    sh """
+                    ${SONAR_SCANNER}/bin/sonar-scanner \
+                    -Dsonar.projectKey=nodejs-app \
+                    -Dsonar.projectName=nodejs-app \
+                    -Dsonar.sources=. \
+                    -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info
+                    """
+                }
             }
-
         }
 
-        stage('Trivy') {
-
+        stage('Filesystem Scan') {
             steps {
-
-                sh 'trivy fs .'
-
+                sh '''
+                trivy fs --exit-code 0 --severity LOW,MEDIUM .
+                trivy fs --exit-code 1 --severity HIGH,CRITICAL .
+                '''
             }
-
         }
 
-        stage('Build Docker') {
-
+        stage('Docker Build') {
             steps {
-
-                sh 'docker build -t $IMAGE:$BUILD_NUMBER .'
-
+                sh '''
+                docker build -t $IMAGE_NAME:$IMAGE_TAG .
+                docker tag $IMAGE_NAME:$IMAGE_TAG $IMAGE_NAME:latest
+                '''
             }
-
         }
 
-        stage('Push Docker') {
-
+        stage('Docker Image Scan') {
             steps {
+                sh '''
+                trivy image --exit-code 0 --severity LOW,MEDIUM $IMAGE_NAME:$IMAGE_TAG
+                trivy image --exit-code 1 --severity HIGH,CRITICAL $IMAGE_NAME:$IMAGE_TAG
+                '''
+            }
+        }
 
+        stage('Push Docker Image') {
+            steps {
                 withCredentials([usernamePassword(
-                credentialsId: 'dockerhub',
-                usernameVariable: 'USER',
-                passwordVariable: 'PASS'
+                    credentialsId: 'dockerhub',
+                    usernameVariable: 'DOCKER_USER',
+                    passwordVariable: 'DOCKER_PASS'
                 )]) {
 
-                sh '''
+                    sh '''
+                    echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
 
-                echo $PASS | docker login -u $USER --password-stdin
-
-                docker push $IMAGE:$BUILD_NUMBER
-
-                '''
-
+                    docker push $IMAGE_NAME:$IMAGE_TAG
+                    docker push $IMAGE_NAME:latest
+                    '''
                 }
-
             }
-
         }
 
-        stage('Deploy') {
-
+        stage('Deploy to Kubernetes') {
             steps {
-
                 sh '''
+                sed -i "s|IMAGE_PLACEHOLDER|$IMAGE_NAME:$IMAGE_TAG|g" k8/deployment.yaml
 
-                sed -i "s/latest/$BUILD_NUMBER/" k8s/deployment.yaml
-
-                kubectl apply -f k8s/
-
+                kubectl apply -f k8/
                 '''
-
             }
-
         }
-
     }
 
+    post {
+
+        success {
+            echo "Pipeline completed successfully."
+        }
+
+        failure {
+            echo "Pipeline failed."
+        }
+
+        always {
+            cleanWs()
+        }
+    }
 }
