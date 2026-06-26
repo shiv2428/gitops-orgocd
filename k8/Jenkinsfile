@@ -1,0 +1,116 @@
+pipeline {
+
+    agent any
+
+    environment {
+
+        IMAGE="dockerhubusername/node-app"
+
+    }
+
+    stages {
+
+        stage('Checkout') {
+
+            steps {
+
+                git branch: 'dev',
+                url: 'https://github.com/shiv2428/gitops-orgocd.git'
+
+            }
+
+        }
+
+        stage('Install') {
+
+            steps {
+
+                sh 'npm install'
+
+            }
+
+        }
+
+        stage('Test') {
+
+            steps {
+
+                sh 'npm test'
+
+            }
+
+        }
+
+        stage('SonarQube') {
+
+            steps {
+
+                sh 'sonar-scanner'
+
+            }
+
+        }
+
+        stage('Trivy') {
+
+            steps {
+
+                sh 'trivy fs .'
+
+            }
+
+        }
+
+        stage('Build Docker') {
+
+            steps {
+
+                sh 'docker build -t $IMAGE:$BUILD_NUMBER .'
+
+            }
+
+        }
+
+        stage('Push Docker') {
+
+            steps {
+
+                withCredentials([usernamePassword(
+                credentialsId: 'dockerhub',
+                usernameVariable: 'USER',
+                passwordVariable: 'PASS'
+                )]) {
+
+                sh '''
+
+                echo $PASS | docker login -u $USER --password-stdin
+
+                docker push $IMAGE:$BUILD_NUMBER
+
+                '''
+
+                }
+
+            }
+
+        }
+
+        stage('Deploy') {
+
+            steps {
+
+                sh '''
+
+                sed -i "s/latest/$BUILD_NUMBER/" k8s/deployment.yaml
+
+                kubectl apply -f k8s/
+
+                '''
+
+            }
+
+        }
+
+    }
+
+}
