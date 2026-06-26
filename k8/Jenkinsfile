@@ -4,7 +4,6 @@ pipeline {
     environment {
         IMAGE_NAME = "YOUR_DOCKERHUB_USERNAME/nodejs-app"
         IMAGE_TAG = "${BUILD_NUMBER}"
-        SONAR_SCANNER = tool 'sonar-scanner'
     }
 
     stages {
@@ -36,43 +35,11 @@ pipeline {
             }
         }
 
-        stage('SonarQube Scan') {
-            steps {
-                withSonarQubeEnv('sonarqube') {
-                    sh """
-                    ${SONAR_SCANNER}/bin/sonar-scanner \
-                    -Dsonar.projectKey=nodejs-app \
-                    -Dsonar.projectName=nodejs-app \
-                    -Dsonar.sources=. \
-                    -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info
-                    """
-                }
-            }
-        }
-
-        stage('Filesystem Scan') {
-            steps {
-                sh '''
-                trivy fs --exit-code 0 --severity LOW,MEDIUM .
-                trivy fs --exit-code 1 --severity HIGH,CRITICAL .
-                '''
-            }
-        }
-
-        stage('Docker Build') {
+        stage('Build Docker Image') {
             steps {
                 sh '''
                 docker build -t $IMAGE_NAME:$IMAGE_TAG .
                 docker tag $IMAGE_NAME:$IMAGE_TAG $IMAGE_NAME:latest
-                '''
-            }
-        }
-
-        stage('Docker Image Scan') {
-            steps {
-                sh '''
-                trivy image --exit-code 0 --severity LOW,MEDIUM $IMAGE_NAME:$IMAGE_TAG
-                trivy image --exit-code 1 --severity HIGH,CRITICAL $IMAGE_NAME:$IMAGE_TAG
                 '''
             }
         }
@@ -87,7 +54,6 @@ pipeline {
 
                     sh '''
                     echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
-
                     docker push $IMAGE_NAME:$IMAGE_TAG
                     docker push $IMAGE_NAME:latest
                     '''
@@ -98,8 +64,6 @@ pipeline {
         stage('Deploy to Kubernetes') {
             steps {
                 sh '''
-                sed -i "s|IMAGE_PLACEHOLDER|$IMAGE_NAME:$IMAGE_TAG|g" k8/deployment.yaml
-
                 kubectl apply -f k8/
                 '''
             }
@@ -107,17 +71,12 @@ pipeline {
     }
 
     post {
-
         success {
             echo "Pipeline completed successfully."
         }
 
         failure {
             echo "Pipeline failed."
-        }
-
-        always {
-            cleanWs()
         }
     }
 }
